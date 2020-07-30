@@ -1,0 +1,181 @@
+---
+title: "ddPCR example analysis notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Load the twoddpcr package:
+```{r}
+library(twoddpcr)
+library(ggplot2)
+```
+
+Use the built-in KRAS data set for exploration.  This data set comes from the analaysis of a serial dilution of a mixture of mutant and wildtype A549 cells (5% mt and 95% wt).  To begin, create a ddpcrPlate object, and name it "plate":
+
+```{r}
+plate <- ddpcrPlate(wells=KRASdata)
+plate2 <- ddpcrPlate(wells=KRASdata)
+plate3 <- ddpcrPlate(plate2["E03"])
+```
+
+Create a basic 2D dot plot showing the FAM and Hex channel signals:
+
+```{r}
+dropletPlot(plate)
+```
+
+Generate a heat map of the data:
+
+```{r}
+heatPlot(plate)
+```
+
+We can also plot all wells from the 96-well plate, side-by-side, as follows:
+
+```{r}
+facetPlot(plate)
+```
+
+Check the classification that was assigned by the Biorad software:
+
+```{r}
+commonClassificationMethod(plate)
+```
+
+```{r}
+dropletPlot(plate, cMethod="Cluster")
+```
+
+We can also plot an individual well.  We can see all wells of the plate by calling the "names()" function on the plate object:
+
+```{r}
+names(plate)
+indexer <- names(plate)
+```
+
+Write a for loop to analyze each well individually:
+
+```{r}
+
+for (index in indexer){
+  print(index)
+  myplotobject <- dropletPlot(plate[index], cMethod="Cluster")
+  print(myplotobject)
+}
+  
+```
+
+We can apply a constant value threshold for Ch1 and Ch2 as follows:
+
+```{r}
+plate <- thresholdClassify(plate, ch1Threshold=6500, ch2Threshold=3000)
+```
+
+We can then re-plot, and this time pass "thresholds" as the value to the cMethod parameter:
+
+```{r}
+dropletPlot(plate, cMethod="thresholds")
+```
+
+Instead of simply drawing thresholds for ch1 and ch2, we can apply machine learning approaches to classify the data points.  The twoddpcr package has native support for the K-means clustering algorithm.  Note that, for K-means clustering, it is necessary to define the number of data clusters prior to running the analysis.  In this case, we presume to have data clusters with N = 4 (representing NN, NP, PN, PP).
+
+```{r}
+plate <- kmeansClassify(plate)
+commonClassificationMethod(plate)
+```
+
+Plot the data using the results of the K-means clustering to color elements:
+
+```{r}
+dropletPlot(plate, cMethod="kmeans")
+```
+
+We can also use the function mahalanobisRain to remove data points of ambiguous identity (i.e., data that falls between two distinct clusters) as follows:
+
+```{r}
+plate <- mahalanobisRain(plate, cMethod="kmeans", maxDistances=3)
+commonClassificationMethod(plate)
+```
+
+Plotting the data using the kmeansMahRain parameters,
+
+```{r}
+dropletPlot(plate, cMethod="kmeansMahRain")
+```
+
+In this case, too much data has been labeled as "Rain".  To fix this, we can fine tune the parameter by setting the max distances that points can be from the center of each cluster and not be labeled as "Rain".
+
+```{r}
+plate <- mahalanobisRain(plate, cMethod="kmeans",
+                         maxDistances=list(NN=35, NP=35, PN=35, PP=35))
+commonClassificationMethod(plate)
+```
+
+Replotting, 
+
+```{r}
+dropletPlot(plate, cMethod="kmeansMahRain")
+```
+
+The above plot looks much better!  The points that are designated as "Rain" is visually reasonable.
+
+The twoddpcr pacakge also allows for the use of other classification algorithms.  One example given in the pacakge literature is for K-Nearest Neighbors classification.  K-NN is a supervised classification technique, where, on the basis of a trained data set, new data points are classified based on who (i.e. which data point(s)) its nearest neighbors are (typically, in Euclidean distance).
+
+```{r}
+x <- c("E03", "A04")
+print(x)
+print(class(x))
+```
+```{r}
+trainPlate <- plate[x]
+```
+
+
+```{r}
+trainPlate <- kmeansClassify(trainPlate)
+dropletPlot(trainPlate, cMethod="kmeans")
+```
+
+```{r}
+trainPlate <- mahalanobisRain(trainPlate, cMethod="kmeans", maxDistances=3)
+dropletPlot(trainPlate, cMethod="kmeansMahRain")
+```
+
+```{r}
+trainSet <- removeDropletClasses(trainPlate, cMethod="kmeansMahRain")
+print(class(trainSet))
+print(class(trainSet$E03))
+```
+
+```{r}
+trainSet <- do.call(rbind, trainSet)
+colnames(trainSet)
+print(class(trainSet))
+table(trainSet$kmeansMahRain)
+```
+
+
+Next, we can create the training data and its classifications from the trainSet dataframe.
+
+```{r}
+trainAmplitudes <- trainSet[, c("Ch1.Amplitude", "Ch2.Amplitude")]
+trainCl <- trainSet$kmeansMahRain
+```
+
+Now, we can apply the kNN algorithm to the whole plate data object, using the above as the training data.
+
+```{r}
+plate <- knnClassify(plate, trainData=trainAmplitudes, cl=trainCl, k=3)
+commonClassificationMethod(plate)
+```
+Plot by the various classification methods:
+```{r}
+dropletPlot(plate, cMethod="thresholds")
+dropletPlot(plate, cMethod="kmeans")
+dropletPlot(plate, cMethod="kmeansMahRain")
+dropletPlot(plate, cMethod="knn")
+```
+
